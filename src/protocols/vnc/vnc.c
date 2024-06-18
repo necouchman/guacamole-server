@@ -509,12 +509,11 @@ void* guac_vnc_client_thread(void* data) {
 
     }
 
-    /* Update the display with the owner's screen size. */
-    guac_client_for_owner(client, guac_vnc_display_set_owner_size, rfb_client);
-
     guac_socket_flush(client->socket);
 
     guac_timestamp last_frame_end = guac_timestamp_current();
+
+    int set_owner_size = 0;
 
     /* Handle messages from VNC server while client is running */
     while (client->state == GUAC_CLIENT_RUNNING) {
@@ -539,6 +538,12 @@ void* guac_vnc_client_thread(void* data) {
                             GUAC_PROTOCOL_STATUS_UPSTREAM_ERROR,
                             "Error handling message from VNC server.");
                     break;
+                }
+
+                /* Update the display with the owner's screen size. */
+                if (set_owner_size == 0 && client.screen.width && client.screen.height){
+                   guac_client_for_owner(client, guac_vnc_display_set_owner_size, rfb_client);
+                   set_owner_size = 1;
                 }
 
                 /* Calculate time remaining in frame */
