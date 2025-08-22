@@ -18,6 +18,7 @@
  */
 
 #include "channels/rail.h"
+#include "gdi.h"
 #include "plugins/channels.h"
 #include "rdp.h"
 #include "settings.h"
@@ -28,6 +29,7 @@
 #include <freerdp/rail.h>
 #include <freerdp/window.h>
 #include <guacamole/client.h>
+#include <guacamole/display.h>
 #include <guacamole/mem.h>
 #include <winpr/wtypes.h>
 #include <winpr/wtsapi.h>
@@ -274,6 +276,23 @@ static BOOL guac_rdp_rail_window_update(rdpContext* context,
         }
     }
 
+    /**
+     * If the Window position has changed, we need to force a refresh of the
+     * window area.
+     */
+
+    if ((fieldFlags & WINDOW_ORDER_FIELD_WND_OFFSET)
+            || (fieldFlags & WINDOW_ORDER_FIELD_WND_SIZE)
+            || (fieldFlags & WINDOW_ORDER_FIELD_CLIENT_AREA_OFFSET)
+            || (fieldFlags & WINDOW_ORDER_FIELD_CLIENT_AREA_SIZE)
+            || (fieldFlags & WINDOW_ORDER_FIELD_WND_CLIENT_DELTA)
+            || (fieldFlags & WINDOW_ORDER_FIELD_VIS_OFFSET)
+            || (fieldFlags & WINDOW_ORDER_FIELD_VISIBILITY)) {
+
+        guac_display_render_thread_notify_modified(rdp_client->render_thread);
+
+    }
+
     return TRUE;
 
 }
@@ -318,6 +337,8 @@ static void guac_rdp_rail_channel_connected(rdpContext* context,
     rail->ServerHandshake = guac_rdp_rail_handshake;
     rail->ServerHandshakeEx = guac_rdp_rail_handshake_ex;
     context->update->window->WindowUpdate = guac_rdp_rail_window_update;
+    // context->update->window->WindowCreate = guac_rdp_rail_window_create;
+    // context->update->window->WindowDelete = guac_rdp_rail_window_delete;
 
     guac_client_log(client, GUAC_LOG_DEBUG, "RAIL (RemoteApp) channel "
             "connected.");
