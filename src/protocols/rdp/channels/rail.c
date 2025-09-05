@@ -31,6 +31,7 @@
 #include <guacamole/client.h>
 #include <guacamole/display.h>
 #include <guacamole/mem.h>
+#include <guacamole/rect.h>
 #include <winpr/wtypes.h>
 #include <winpr/wtsapi.h>
 
@@ -228,6 +229,27 @@ static UINT guac_rdp_rail_handshake_ex(RailClientContext* rail,
     return guac_rdp_rail_complete_handshake(rail);
 }
 
+static BOOL guac_rdp_rail_window_create(rdpContext* context,
+        RAIL_CONST WINDOW_ORDER_INFO* orderInfo,
+        RAIL_CONST WINDOW_STATE_ORDER* windowState) {
+
+    guac_client* client = ((rdp_freerdp_context*) context)->client;
+    guac_rdp_client* rdp_client = (guac_rdp_client*) client->data;
+
+    guac_client_log(client, GUAC_LOG_TRACE, "RAIL window create callback: %d", orderInfo->fieldFlags);
+
+    guac_rect dst_rect;
+    guac_rect_init(&dst_rect, windowState->windowOffsetX, windowState->windowOffsetY,
+            windowState->windowWidth, windowState->windowHeight);
+    guac_rect_constrain(&dst_rect, &rdp_client->current_context->bounds);
+    guac_rect_extend(&rdp_client->current_context->dirty, &dst_rect);
+
+    guac_display_render_thread_notify_modified(rdp_client->render_thread);
+
+    return TRUE;
+
+}
+
 /**
  * A callback function that is executed when an update for a RAIL window is
  * received from the RDP server.
@@ -264,8 +286,7 @@ static BOOL guac_rdp_rail_window_update(rdpContext* context,
         guac_client_log(client, GUAC_LOG_TRACE, "RAIL window visibility change: %d", windowState->showState);
 
         /* State is either hidden or minimized - send restore command. */
-        if (windowState->showState == GUAC_RDP_RAIL_WINDOW_STATE_HIDDEN
-            || windowState->showState == GUAC_RDP_RAIL_WINDOW_STATE_MINIMIZED) {
+        if (windowState->showState == GUAC_RDP_RAIL_WINDOW_STATE_MINIMIZED) {
 
             guac_client_log(client, GUAC_LOG_DEBUG, "RAIL window minimized, sending restore command.");
 
@@ -280,7 +301,6 @@ static BOOL guac_rdp_rail_window_update(rdpContext* context,
      * If the Window position has changed, we need to force a refresh of the
      * window area.
      */
-
     if ((fieldFlags & WINDOW_ORDER_FIELD_WND_OFFSET)
             || (fieldFlags & WINDOW_ORDER_FIELD_WND_SIZE)
             || (fieldFlags & WINDOW_ORDER_FIELD_CLIENT_AREA_OFFSET)
@@ -288,6 +308,12 @@ static BOOL guac_rdp_rail_window_update(rdpContext* context,
             || (fieldFlags & WINDOW_ORDER_FIELD_WND_CLIENT_DELTA)
             || (fieldFlags & WINDOW_ORDER_FIELD_VIS_OFFSET)
             || (fieldFlags & WINDOW_ORDER_FIELD_VISIBILITY)) {
+
+        guac_rect dst_rect;
+        guac_rect_init(&dst_rect, windowState->windowOffsetX, windowState->windowOffsetY,
+                windowState->windowWidth, windowState->windowHeight);
+        guac_rect_constrain(&dst_rect, &rdp_client->current_context->bounds);
+        guac_rect_extend(&rdp_client->current_context->dirty, &dst_rect);
 
         guac_display_render_thread_notify_modified(rdp_client->render_thread);
 
@@ -336,6 +362,7 @@ static void guac_rdp_rail_channel_connected(rdpContext* context,
     rail->ServerExecuteResult = guac_rdp_rail_execute_result;
     rail->ServerHandshake = guac_rdp_rail_handshake;
     rail->ServerHandshakeEx = guac_rdp_rail_handshake_ex;
+    context->update->window->WindowCreate = guac_rdp_rail_window_create;
     context->update->window->WindowUpdate = guac_rdp_rail_window_update;
     // context->update->window->WindowCreate = guac_rdp_rail_window_create;
     // context->update->window->WindowDelete = guac_rdp_rail_window_delete;
