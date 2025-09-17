@@ -38,6 +38,22 @@
 #include <stddef.h>
 #include <string.h>
 
+guac_common_list_element* get_rail_window(guac_common_list* window_list, UINT64 window_id) {
+
+    guac_common_list_element* item = window_list->head;
+    while (item != NULL) {
+        if (((guac_rdp_rail_window*)item->data)->window_id == window_id)
+            return item;
+
+        item = item->next;
+
+    }
+
+    return NULL;
+
+}
+
+
 /**
  * Completes initialization of the RemoteApp session, responding to the server
  * handshake, sending client status and system parameters, and executing the
@@ -64,7 +80,8 @@ static UINT guac_rdp_rail_complete_handshake(RailClientContext* rail) {
 
     UINT status;
 
-    guac_client* client = (guac_client*) rail->custom;
+    guac_rdp_rail_data* rail_data = (guac_rdp_rail_data*) rail->custom;
+    guac_client* client = rail_data->client;
     guac_rdp_client* rdp_client = (guac_rdp_client*) client->data;
 
     RAIL_CLIENT_STATUS_ORDER client_status = {
@@ -166,7 +183,8 @@ static UINT guac_rdp_rail_complete_handshake(RailClientContext* rail) {
 static UINT guac_rdp_rail_execute_result(RailClientContext* context,
         const RAIL_EXEC_RESULT_ORDER* execResult) {
 
-    guac_client* client = (guac_client*) context->custom;
+    guac_rdp_rail_data* rail_data = (guac_rdp_rail_data*) context->custom;
+    guac_client* client = rail_data->client;
 
     if (execResult->execResult != RAIL_EXEC_S_OK) {
         guac_client_log(client, GUAC_LOG_DEBUG, "Failed to execute RAIL command on server: %d", execResult->execResult);
@@ -198,7 +216,8 @@ static UINT guac_rdp_rail_execute_result(RailClientContext* context,
  */
 static UINT guac_rdp_rail_handshake(RailClientContext* rail,
         RAIL_CONST RAIL_HANDSHAKE_ORDER* handshake) {
-    guac_client* client = (guac_client*) rail->custom;
+    guac_rdp_rail_data* rail_data = (guac_rdp_rail_data*) rail->custom;
+    guac_client* client = rail_data->client;
     guac_client_log(client, GUAC_LOG_TRACE, "RAIL handshake callback.");
     return guac_rdp_rail_complete_handshake(rail);
 }
@@ -224,7 +243,8 @@ static UINT guac_rdp_rail_handshake(RailClientContext* rail,
  */
 static UINT guac_rdp_rail_handshake_ex(RailClientContext* rail,
         RAIL_CONST RAIL_HANDSHAKE_EX_ORDER* handshake_ex) {
-    guac_client* client = (guac_client*) rail->custom;
+    guac_rdp_rail_data* rail_data = (guac_rdp_rail_data*) rail->custom;
+    guac_client* client = rail_data->client;
     guac_client_log(client, GUAC_LOG_TRACE, "RAIL handshake ex callback.");
     return guac_rdp_rail_complete_handshake(rail);
 }
@@ -235,17 +255,39 @@ static BOOL guac_rdp_rail_window_create(rdpContext* context,
 
     guac_client* client = ((rdp_freerdp_context*) context)->client;
     guac_rdp_client* rdp_client = (guac_rdp_client*) client->data;
+    guac_rdp_rail_data* rail_data = rdp_client->rail_interface->custom;
 
-    guac_client_log(client, GUAC_LOG_TRACE, "RAIL window create callback: %d", orderInfo->fieldFlags);
+    guac_client_log(client, GUAC_LOG_TRACE, ">>> RAIL window create callback: %d", orderInfo->windowId);
+    guac_client_log(client, GUAC_LOG_TRACE, ">>> RAIL client params (x, y, w, h): %d, %d, %d, %d", windowState->clientOffsetX, windowState->clientOffsetY, windowState->clientAreaWidth, windowState->clientAreaHeight);
+    guac_client_log(client, GUAC_LOG_TRACE, ">>> RAIL window params (x, y, w, h): %d, %d, %d, %d", windowState->windowOffsetX, windowState->windowOffsetY, windowState->windowWidth, windowState->windowHeight);
+    guac_client_log(client, GUAC_LOG_TRACE, ">>> RAIL window/client delta (x, y): %d, %d", windowState->windowClientDeltaX, windowState->windowClientDeltaY);
+    guac_client_log(client, GUAC_LOG_TRACE, ">>> RAIL visible offset (x, y): %d, %d", windowState->visibleOffsetX, windowState->visibleOffsetY);
 
-    guac_rect dst_rect;
-    guac_rect_init(&dst_rect, windowState->windowOffsetX, windowState->windowOffsetY,
-            windowState->windowWidth, windowState->windowHeight);
-    guac_rect_constrain(&dst_rect, &rdp_client->current_context->bounds);
-    guac_rect_extend(&rdp_client->current_context->dirty, &dst_rect);
 
-    guac_display_render_thread_notify_modified(rdp_client->render_thread);
+    guac_client_log(client, GUAC_LOG_TRACE, ">>> Allocating a new RAIL window.");
+    guac_rdp_rail_window* new_window = guac_mem_alloc(sizeof(guac_rdp_rail_window));
+    new_window->window_layer = guac_display_alloc_layer(rdp_client->display, 0);
+    new_window->window_id = orderInfo->windowId;
+    new_window->x = windowState->windowOffsetX;
+    new_window->y = windowState->windowOffsetY;
+    new_window->w = windowState->windowWidth;
+    new_window->h = windowState->windowHeight;
 
+    guac_client_log(client, GUAC_LOG_TRACE, ">>> Moving and resizing the layer for the new window.");
+    guac_display_layer_move(new_window->window_layer, windowState->windowOffsetX, windowState->windowOffsetY);
+    guac_display_layer_resize(new_window->window_layer, windowState->windowWidth, windowState->windowHeight);
+
+    guac_client_log(client, GUAC_LOG_TRACE, ">>> Adding window to window list.");
+    guac_common_list_lock(rail_data->rail_windows);
+    guac_common_list_add(rail_data->rail_windows, new_window);
+    rail_data->num_windows++;
+    guac_common_list_unlock(rail_data->rail_windows);
+
+    // guac_client_log(client, GUAC_LOG_TRACE, "Notfying render thread of modification.");
+    // guac_display_render_thread_notify_modified(rdp_client->render_thread);
+    // guac_display_render_thread_notify_frame(rdp_client->render_thread);
+
+    guac_client_log(client, GUAC_LOG_TRACE, ">>> Done with RAIL window creation.");
     return TRUE;
 
 }
@@ -276,8 +318,9 @@ static BOOL guac_rdp_rail_window_update(rdpContext* context,
 
     guac_client* client = ((rdp_freerdp_context*) context)->client;
     guac_rdp_client* rdp_client = (guac_rdp_client*) client->data;
+    guac_rdp_rail_data* rail_data = rdp_client->rail_interface->custom;
 
-    guac_client_log(client, GUAC_LOG_TRACE, "RAIL window update callback: %d", orderInfo->fieldFlags);
+    guac_client_log(client, GUAC_LOG_TRACE, ">>> RAIL window update callback: %d", orderInfo->windowId);
 
     UINT32 fieldFlags = orderInfo->fieldFlags;
 
@@ -309,15 +352,67 @@ static BOOL guac_rdp_rail_window_update(rdpContext* context,
             || (fieldFlags & WINDOW_ORDER_FIELD_VIS_OFFSET)
             || (fieldFlags & WINDOW_ORDER_FIELD_VISIBILITY)) {
 
-        guac_rect dst_rect;
-        guac_rect_init(&dst_rect, windowState->windowOffsetX, windowState->windowOffsetY,
-                windowState->windowWidth, windowState->windowHeight);
-        guac_rect_constrain(&dst_rect, &rdp_client->current_context->bounds);
-        guac_rect_extend(&rdp_client->current_context->dirty, &dst_rect);
+        
+        guac_common_list_element* rail_window_element = get_rail_window(rail_data->rail_windows, orderInfo->windowId);
+        if (rail_window_element == NULL) {
+            guac_client_log(client, GUAC_LOG_ERROR, ">>> UPDATE: Could not retrieve the specified RAIL window: %d", orderInfo->windowId);
+            return FALSE;
+        }
+        
+        guac_client_log(client, GUAC_LOG_TRACE, ">>> UPDATE: Window position for window: %d.", orderInfo->windowId);
 
-        guac_display_render_thread_notify_modified(rdp_client->render_thread);
+        guac_rdp_rail_window* rail_window = (guac_rdp_rail_window*) rail_window_element->data;
+        rail_window->x = windowState->windowOffsetX;
+        rail_window->y = windowState->windowOffsetY;
+        rail_window->w = windowState->windowWidth;
+        rail_window->h = windowState->windowHeight;
+
+        guac_display_layer_raw_context* current_context = guac_display_layer_open_raw(rail_window->window_layer);
+
+        guac_display_layer_move(rail_window->window_layer, windowState->windowOffsetX, windowState->windowOffsetY);
+        guac_display_layer_resize(rail_window->window_layer, windowState->windowWidth, windowState->windowHeight);
+
+        guac_display_layer_close_raw(rail_window->window_layer, current_context);
 
     }
+
+    return TRUE;
+
+}
+
+/**
+ * A callback function that is executed when a RAIL window has been closed and
+ * should be removed from tracking by the RAIL plugin.
+ *
+ * @param context
+ *     A pointer to the rdpContext structure used by FreeRDP to handle the
+ *     window delete event.
+ *
+ * @param orderInfo
+ *     A pointer to the data structure that contains information about what
+ *     window was deleted.
+ *
+ * @return
+ *     A pointer to a list of RAIL windows that are open when RAIL is in use and
+ *     applications are being accessed as RemoteApps.
+ */
+static BOOL guac_rdp_rail_window_delete(rdpContext* context,
+        RAIL_CONST WINDOW_ORDER_INFO* orderInfo) {
+
+    guac_client* client = ((rdp_freerdp_context*) context)->client;
+    guac_rdp_client* rdp_client = (guac_rdp_client*) client->data;
+    guac_rdp_rail_data* rail_data = rdp_client->rail_interface->custom;
+
+    guac_client_log(client, GUAC_LOG_TRACE, "RAIL window delete callback: %d", orderInfo->windowId);
+
+    /* Remove the layer associated with the window. */
+    guac_common_list_element* rail_window = get_rail_window(rail_data->rail_windows, orderInfo->windowId);
+    guac_display_free_layer(((guac_rdp_rail_window*) rail_window->data)->window_layer);
+    
+    /* Update the RAIL window list. */
+    guac_common_list_lock(rail_data->rail_windows);
+    guac_common_list_remove(rail_data->rail_windows, rail_window);
+    guac_common_list_unlock(rail_data->rail_windows);
 
     return TRUE;
 
@@ -347,6 +442,12 @@ static void guac_rdp_rail_channel_connected(rdpContext* context,
     guac_client* client = ((rdp_freerdp_context*) context)->client;
     guac_rdp_client* rdp_client = (guac_rdp_client*) client->data;
 
+    /* Set up data structure for tracking RAIL-specific data */
+    guac_rdp_rail_data* rail_data = guac_mem_alloc(sizeof(guac_rdp_rail_data));
+    rail_data->client = client;
+    rail_data->rail_windows = guac_common_list_alloc();
+    rail_data->num_windows = 0;
+
     /* Ignore connection event if it's not for the RAIL channel */
     if (strcmp(args->name, RAIL_SVC_CHANNEL_NAME) != 0)
         return;
@@ -358,14 +459,13 @@ static void guac_rdp_rail_channel_connected(rdpContext* context,
 
     /* Init FreeRDP RAIL context, ensuring the guac_client can be accessed from
      * within any RAIL-specific callbacks */
-    rail->custom = client;
+    rail->custom = rail_data;
     rail->ServerExecuteResult = guac_rdp_rail_execute_result;
     rail->ServerHandshake = guac_rdp_rail_handshake;
     rail->ServerHandshakeEx = guac_rdp_rail_handshake_ex;
     context->update->window->WindowCreate = guac_rdp_rail_window_create;
     context->update->window->WindowUpdate = guac_rdp_rail_window_update;
-    // context->update->window->WindowCreate = guac_rdp_rail_window_create;
-    // context->update->window->WindowDelete = guac_rdp_rail_window_delete;
+    context->update->window->WindowDelete = guac_rdp_rail_window_delete;
 
     guac_client_log(client, GUAC_LOG_DEBUG, "RAIL (RemoteApp) channel "
             "connected.");
