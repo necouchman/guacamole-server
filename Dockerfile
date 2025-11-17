@@ -38,7 +38,7 @@ ARG BUILD_JOBS
 ARG BUILD_DIR=/tmp/guacamole-server
 
 # FreeRDP version (default to version 2)
-ARG FREERDP_VERSION=2
+ARG FREERDP_VERSION=3
 
 # The final install location for guacamole-server and all dependencies. NOTE:
 # This value is hard-coded in the entrypoint. Any change to this value must be
