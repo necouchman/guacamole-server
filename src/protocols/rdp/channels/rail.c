@@ -273,6 +273,8 @@ static BOOL guac_rdp_rail_window_update(rdpContext* context,
         }
     }
 
+    guac_display_render_thread_notify_modified(rdp_client->render_thread);
+
     return TRUE;
 
 }

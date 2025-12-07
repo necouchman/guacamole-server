@@ -76,6 +76,8 @@ BOOL guac_rdp_gdi_begin_paint(rdpContext* context) {
     guac_rdp_client* rdp_client = (guac_rdp_client*) client->data;
     rdpGdi* gdi = context->gdi;
 
+    guac_client_log(client, GUAC_LOG_TRACE, ">>> GDI: BEGIN PAINT.");
+
     GUAC_ASSERT(rdp_client->current_context == NULL);
 
     /* All potential drawing operations must occur while holding an open context */
@@ -97,6 +99,8 @@ BOOL guac_rdp_gdi_end_paint(rdpContext* context) {
     guac_client* client = ((rdp_freerdp_context*) context)->client;
     guac_rdp_client* rdp_client = (guac_rdp_client*) client->data;
     rdpGdi* gdi = context->gdi;
+
+    guac_client_log(client, GUAC_LOG_TRACE, ">>> GDI: END PAINT");
 
     guac_display_layer* default_layer = guac_display_default_layer(rdp_client->display);
     guac_display_layer_raw_context* current_context = rdp_client->current_context;
