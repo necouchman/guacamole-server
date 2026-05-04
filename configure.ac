@@ -986,6 +986,21 @@ then
                       [[#include <freerdp/freerdp.h>]])
 fi
 
+# Updated authentication callback. The previous version, Authenticate, has been
+# deprecated as of 3.25.0.
+if test "x${have_freerdp}" = "xyes"
+then
+    AC_CHECK_MEMBERS([freerdp.AuthenticateEx],,,
+                      [[#include <freerdp/freerdp.h>]])
+fi
+
+# Check for old authentication callback
+if test "x${have_freerdp}" = "xyes"
+then
+    AC_CHECK_MEMBERS([freerdp.Authenticate],,,
+                      [[#include <freerdp/freerdp.h>]])
+fi
+
 if test "x${have_freerdp}" = "xyes"
 then
     AC_CHECK_DECLS([winpr_aligned_free],
